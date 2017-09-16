@@ -1,19 +1,17 @@
-##!/usr/bin/python
-
+# Adapted for micropython by Blitzkraft
+# Original Authors listed below:
 # LIS3DH Python Library for Raspberry Pi
 # Created by Matt Dyson (mattdyson.org)
 # Version 1.0 - 10/01/16
 # Version 1.1 - 19/03/16 (Mal Smalley) Adding click detection
 
-# Requires the Adafruit I2C Python library
-# https://github.com/adafruit/Adafruit-Raspberry-Pi-Python-Code
-
 # Inspiration and assistance from:
 #  - https://github.com/adafruit/Adafruit_LIS3DH
 #  - https://www.adafruit.com/datasheets/LIS3DH.pdf
 
-from Adafruit_I2C import Adafruit_I2C
-import RPi.GPIO as GPIO        #needed for Hardware interrupt
+from machine import I2C
+from machine import Pin
+from ustruct import unpack
 
 class LIS3DH:
 
@@ -76,7 +74,7 @@ class LIS3DH:
    REG_TIMEWINDOW    = 0x3D
 
    # Values
-   DEVICE_ID     = 0x33
+   DEVICE_ID     = b'33'
    INT_IO		 = 0x04        # GPIO pin for interrupt
    CLK_NONE      = 0x00
    CLK_SINGLE    = 0x01
@@ -87,21 +85,30 @@ class LIS3DH:
    AXIS_Y        = 0x01
    AXIS_Z        = 0x02
 
-   def __init__(self, address=0x18, bus=-1, debug=False):
+   def readU8(self, x):
+       return self.i2c.readfrom_mem(self.address, x, 2)
+
+   def write8(self, reg, val):
+       self.i2c.writeto_mem(self.address, reg, bytearray(val))
+
+
+   def __init__(self, address=0x19, scl=14, sda=2, debug=False):
       self.isDebug = debug
       self.debug("Initialising LIS3DH")
 
-      self.i2c = Adafruit_I2C(address, busnum=bus)
-      self.address = address
+      self.i2c = I2C(scl=Pin(14), sda=Pin(2))
+      self.address = self.i2c.scan()[0]
+      # TODO: Figure out why
+      self.i2c.writeto_mem(self.address, 0x20, b'\x8F')
 
       try:
-         val = self.i2c.readU8(self.REG_WHOAMI)
+         val = self.i2c.readfrom_mem(self.address, self.REG_WHOAMI, 2)
          if val!=self.DEVICE_ID:
             raise Exception("Device ID incorrect - expected 0x%X, got 0x%X at address 0x%X" % (self.DEVICE_ID, val, self.address))
          self.debug("Successfully connected to LIS3DH at address 0x%X" % (self.address))
       except Exception as e:
-         print "Error establishing connection with LIS3DH"
-         print e
+         print("Error establishing connection with LIS3DH")
+         print(e)
 
       # Enable all axis
       self.setAxisStatus(self.AXIS_X, True)
@@ -132,8 +139,10 @@ class LIS3DH:
    def getAxis(self, axis):
       base = self.REG_OUT_X_L + (2 * axis) # Determine which register we need to read from (2 per axis)
       
-      low = self.i2c.readU8(base) # Read the first register (lower bits)
-      high = self.i2c.readU8(base + 1) # Read the next register (higher bits)
+      low = self.readU8(base) # Read the first register (lower bits)
+      low = unpack('<H', low)[0]
+      high = self.readU8(base + 1) # Read the next register (higher bits)
+      high = unpack('<H', high)[0]
       res = low | (high << 8) # Combine the two components
       res = self.twosComp(res) # Calculate the twos compliment of the result
 
@@ -149,7 +158,8 @@ class LIS3DH:
 
    # Get the range that the sensor is currently set to
    def getRange(self):
-      val = self.i2c.readU8(self.REG_CTRL4) # Get value from register
+      val = self.readU8(self.REG_CTRL4) # Get value from register
+      val = unpack('<H', val)[0]
       val = (val >> 4) # Remove lowest 4 bits
       val &= 0b0011 # Mask off two highest bits
 
@@ -163,7 +173,8 @@ class LIS3DH:
       if range<0 or range>3:
          raise Exception("Tried to set invalid range")
 
-      val = self.i2c.readU8(self.REG_CTRL4) # Get value from register
+      val = self.readU8(self.REG_CTRL4) # Get value from register
+      val = unpack('<H', val)[0]
       val &= ~(0b110000) # Mask off lowest 4 bits
       val |= (range << 4) # Write in our new range
       self.writeRegister(self.REG_CTRL4, val) # Write back to register
@@ -174,7 +185,7 @@ class LIS3DH:
        if axis<0 or axis>2:
            raise Exception("Tried to modify invalid axis")
 		
-       current = self.i2c.readU8(self.REG_CTRL1)
+       current = self.readU8(self.REG_CTRL1)
        status = 1 if enable else 0
        final = self.setBit(current, axis, status)
        self.writeRegister(self.REG_CTRL1, final)
@@ -186,7 +197,7 @@ class LIS3DH:
 	
    def setClick(self,clickmode,clickthresh=80,timelimit=10,timelatency=20,timewindow=100,mycallback=None):
         if (clickmode==self.CLK_NONE):
-            val = self.i2c.readU8(self.REG_CTRL3) # Get value from register
+            val = self.readU8(self.REG_CTRL3) # Get value from register
             val &= ~(0x80) # unset bit 8 to disable interrupt
             self.writeRegister(self.REG_CTRL3, val) # Write back to register
             self.writeRegister(self.REG_CLICKCFG, 0) # disable all interrupts
@@ -210,21 +221,22 @@ class LIS3DH:
 
 
    def getClick(self):
-        reg = self.i2c.readU8(self.REG_CLICKSRC)       # read click register
-        self.i2c.readU8(self.REG_INT1SRC)              # reset  interrupt flag
+        reg = self.readU8(self.REG_CLICKSRC)       # read click register
+        self.readU8(self.REG_INT1SRC)              # reset  interrupt flag
         return reg 
 
    # Set the rate (cycles per second) at which data is gathered
 
    def setDataRate(self, dataRate):
-      val = self.i2c.readU8(self.REG_CTRL1) # Get current value
+      val = self.readU8(self.REG_CTRL1) # Get current value
+      val = unpack('<H', val)[0]
       val &= 0b1111 # Mask off lowest 4 bits
       val |= (dataRate << 4) # Write in our new data rate to highest 4 bits
       self.writeRegister(self.REG_CTRL1, val) # Write back to register
 
    # Set whether we want to use high resolution or not
    def setHighResolution(self, highRes=True):
-      val = self.i2c.readU8(self.REG_CTRL4) # Get current value
+      val = self.readU8(self.REG_CTRL4) # Get current value
       status = 1 if highRes else 0
       final = self.setBit(val, 3, status) # High resolution is bit 4 of REG_CTRL4
       self.writeRegister(self.REG_CTRL4, final)
@@ -232,7 +244,7 @@ class LIS3DH:
    # Set whether we want to use block data update or not
    # False = output registers not updated until MSB and LSB reading
    def setBDU(self, bdu=True):
-      val = self.i2c.readU8(self.REG_CTRL4) # Get current value
+      val = self.readU8(self.REG_CTRL4) # Get current value
       status = 1 if bdu else 0
       final = self.setBit(val, 7, status) # Block data update is bit 8 of REG_CTRL4
       self.writeRegister(self.REG_CTRL4, final)
@@ -240,12 +252,13 @@ class LIS3DH:
    # Write the given value to the given register
    def writeRegister(self, register, value):
       self.debug("WRT %s to register 0x%X" % (bin(value), register))
-      self.i2c.write8(register, value)
+      self.write8(register, value)
 
    # Set the bit at index 'bit' to 'value' on 'input' and return
    def setBit(self, input, bit, value):
       mask = 1 << bit
-      input &= ~mask
+      input = unpack('<H', input)[0]
+      input = input & ~mask
       if value:
          input |= mask
       return input
@@ -260,11 +273,11 @@ class LIS3DH:
    # Print an output of all registers
    def dumpRegisters(self):
       for x in range(0x0, 0x3D):
-         read = self.i2c.readU8(x)
-         print "%X: %s" % (x, bin(read))
+         read = self.readU8(x)
+         print("%X: %s" % (x, bin(read)))
 
    def debug(self, message):
       if not self.isDebug: return
-      print message
+      print(message)
 
 
