@@ -18,3 +18,4 @@ This is not a complete implementation of all the features of the LIS3DH - if you
 ## Credits
  * [Matt Dyson](http://mattdyson.org) - Original implementation
  * [Mal Smalley](https://github.com/MalSmalley) - Implementation of 'click' functionality 
+ * [BK bolisetty](https://github.com/BlitzKraft) - Port to micropython

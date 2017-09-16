@@ -9,9 +9,9 @@
 #  - https://github.com/adafruit/Adafruit_LIS3DH
 #  - https://www.adafruit.com/datasheets/LIS3DH.pdf
 
+from ustruct import unpack
 from machine import I2C
 from machine import Pin
-from ustruct import unpack
 
 class LIS3DH:
 
@@ -86,7 +86,7 @@ class LIS3DH:
    AXIS_Z        = 0x02
 
    def readU8(self, x):
-       return self.i2c.readfrom_mem(self.address, x, 2)
+       return self.i2c.readfrom_mem(self.address, x, 1)
 
    def write8(self, reg, val):
        self.i2c.writeto_mem(self.address, reg, bytearray(val))
@@ -98,8 +98,6 @@ class LIS3DH:
 
       self.i2c = I2C(scl=Pin(14), sda=Pin(2))
       self.address = self.i2c.scan()[0]
-      # TODO: Figure out why
-      self.i2c.writeto_mem(self.address, 0x20, b'\x8F')
 
       try:
          val = self.i2c.readfrom_mem(self.address, self.REG_WHOAMI, 2)
@@ -186,8 +184,10 @@ class LIS3DH:
            raise Exception("Tried to modify invalid axis")
 		
        current = self.readU8(self.REG_CTRL1)
+       print("current: ", current)
        status = 1 if enable else 0
        final = self.setBit(current, axis, status)
+       print(final)
        self.writeRegister(self.REG_CTRL1, final)
 	   
    def setInterrupt(self,mycallback):
@@ -259,6 +259,7 @@ class LIS3DH:
       mask = 1 << bit
       input = unpack('<H', input)[0]
       input = input & ~mask
+      print("input: ", input)
       if value:
          input |= mask
       return input
